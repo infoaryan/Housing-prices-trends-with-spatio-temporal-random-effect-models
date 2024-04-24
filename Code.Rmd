@@ -1,0 +1,62 @@
+```{r}
+rm(list = ls(all = TRUE))
+library(INLA)
+```
+
+```{r}
+housing<-read.csv("housing.csv")
+#removing rows with NA's, there are only a few of these 
+housing=housing[complete.cases(housing), ]
+#creating a new covariate 
+housing$average_bed_rooms=housing$total_bedrooms/housing$households
+head(housing)
+
+#We split the original dataset into two parts, training and test
+housing.training<-housing[seq(from=1,to=nrow(housing),by=2), ] 
+housing.test<-housing[seq(from=2,to=nrow(housing),by=2), ]
+```
+
+**Q1)[10 marks]**					
+
+**Fit a Bayesian Linear regression model in INLA (with Gaussian likelihood) using the housing.training dataset such that the response variable is the log(median_house_value), and the covariates in the model are as follows:** **longitude, latitude, housing_median_age, log(median_income), ocean_proximity, average_bed_rooms.**			
+
+**Use scaled versions of the non-categorical covariates in your model.**
+
+```{r}
+names(housing)
+```
+
+```{r}
+# Install and load necessary packages
+install.packages("data.table")
+library(data.table)
+
+# Prepare the data
+housing.training$log_median_income <- log(housing.training$median_income)
+housing.test$log_median_income <- log(housing.test$median_income)
+
+# Scale the non-categorical covariates
+housing_scaled.training <- scale(housing.training[, c("longitude", "latitude","housing_median_age", "log_median_income", "average_bed_rooms")])
+housing_scaled.test <- scale(housing.test[, c("longitude", "latitude", "housing_median_age","log_median_income", "average_bed_rooms")])
+
+# Transform the response variable
+housing.training$log_median_house_value <- log(housing.training$median_house_value)
+housing.test$log_median_house_value <- log(housing.test$median_house_value)
+
+# Combine scaled covariates and transformed response variable
+housing_scaled.training <- cbind(housing_scaled.training, housing.training$log_median_house_value, as.factor(housing.training$ocean_proximity))
+housing_scaled.test <- cbind(housing_scaled.test, housing.test$log_median_house_value, as.factor(housing.test$ocean_proximity))
+
+# Convert to data.table
+housing_dt <- data.table(housing_scaled)
+
+# Define the model formula
+formula <- log_median_house_value ~ longitude + latitude + housing_median_age + log_median_income + average_bed_rooms + ocean_proximity
+
+# Fit the model using INLA
+model <- inla(formula, data = housing_scaled.training, control.predictor = list(compute = FALSE))
+
+# Print out the model summary
+summary(model)
+
+```

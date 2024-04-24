@@ -1,0 +1,769 @@
+---
+editor_options:
+  markdown:
+    wrap: 72
+output: pdf_document
+---
+
+**University of Edinburgh**
+
+**School of Mathematics**
+
+**Bayesian Data Analysis**
+
+**Assignment 2 - s2512060 (Aryan Verma)**
+
+```{r}
+rm(list = ls(all = TRUE))
+#Do not delete this!
+#It clears all variables to ensure reproducibility
+```
+
+![**The dataset is about the houses found in a given California district
+and some summary stats about them based on the 1990 census
+data.**](Flag_of_California.png){width="500"}
+
+```{r}
+#
+library(INLA)
+housing<-read.csv("housing.csv")
+#removing rows with NA's, there are only a few of these
+housing=housing[complete.cases(housing), ]
+#creating a new covariate
+housing$average_bed_rooms=housing$total_bedrooms/housing$households
+
+##############################################
+### Transforming the data for every model ####
+##############################################
+housing$log_median_income <- log(housing$median_income) # Taking log of median income
+housing$y <- log(housing$median_house_value) # Log of median house value (Response)
+
+# Scaling the non-categorical coordinates
+housing$longitude = scale(housing$longitude)
+housing$latitude = scale(housing$latitude)
+housing$housing_median_age = scale(housing$housing_median_age)
+housing$population = scale(housing$population)
+housing$log_median_income = scale(housing$log_median_income)
+housing$average_bed_rooms = scale(housing$average_bed_rooms)
+
+# Additional characteristics required in question 2
+housing$log_median_income2<-scale(housing$log_median_income^2) # log_median_income^2
+housing$log_median_income3<-scale(housing$log_median_income^3) # log_median_income^3
+housing$log_median_income4<-scale(housing$log_median_income^4) # log_median_income^4
+housing$housing_median_age2<-scale(housing$housing_median_age^2) # housing_median_age^2
+housing$housing_median_age3<-scale(housing$housing_median_age^3) # housing_median_age^2
+housing$housing_median_age4<-scale(housing$housing_median_age^4) # housing_median_age^2
+```
+
+**The covariates in the dataset are as follows:**
+
+**longitude, latitude, housing_median_age (median age of houses in
+district), total_rooms (total rooms in all houses in district),
+total_bedrooms (total bedrooms in all houses in district), population
+(population of district), households (number of households in district),
+median_income (median income in district), median_house_value (median
+house value in district), ocean_proximity (categorical covariate about
+proximity of district to ocean), average_bed_rooms (average number of
+bedrooms of houses in district).**
+
+```{r}
+# We split the original dataset into two parts, training and test
+housing.training<-housing[seq(from=1,to=nrow(housing),by=2), ]
+housing.test<-housing[seq(from=2,to=nrow(housing),by=2), ]
+```
+
+**Q1)[10 marks]**
+
+**Fit a Bayesian Linear regression model in INLA (with Gaussian
+likelihood) using the housing.training dataset such that the response
+variable is the log(median_house_value), and the covariates in the model
+are as follows:**
+
+**longitude, latitude, housing_median_age, log(median_income),
+ocean_proximity, average_bed_rooms.**
+
+**Use scaled versions of the non-categorical covariates in your model.**
+
+**Print out the model summary and interpret the posterior means of the
+regression coefficients.**
+
+```{r}
+# Define the model formula
+formula1 <- y ~ 1 + longitude + latitude + housing_median_age + log_median_income + as.factor(ocean_proximity) + average_bed_rooms
+
+# Defining prior for sigma
+sigma.unif.prior = "expression:
+  b = 5;
+  log_dens = (theta>=(-2*log(b)))*(-log(b)-theta/2-log(2)) + (theta<(-2*log(b)))*(-Inf);
+  return(log_dens); 
+"
+b1=5;
+prec.prior1 <- list(prec=list(prior = sigma.unif.prior,initial = (-2*log(b1)+1), fixed = FALSE))
+# Beta prior
+prior.beta1=list(mean.intercept = 0, prec.intercept = 0.1,
+                    mean = 0, prec = 0.1)
+
+# Trainin the model using INLA
+model1 <- inla(formula1, family="gaussian",
+              data=housing.training, 
+              control.family=list(hyper=prec.prior1),
+              control.fixed=prior.beta1,
+              control.compute=list(cpo=T,dic=T,waic=T, config=TRUE),
+              control.predictor = list(compute=TRUE))
+
+# Print out the model summary
+summary(model1)
+```
+
+Interpretation of the posterior means of coefficients:
+
+Though this model is simply trained with bayesian linear regression and
+is not performing well, still let us try to interpret the posterior
+means of the regression coefficients.
+
+-   As we are able to observe that if the home is situated INLAND, it
+    can negatively impact the median house value, with probably a 31%
+    decline on the log scale. Also, a very less negative effect (1.4%)
+    is observed for the houses near the ocean, and further less in
+    magnitude (0.5%) for NEAR THE BAY. Also, the houses on ISLAND seems
+    to have associated with more house value on a log scale by 70.6%,
+    keeping other things constant. (Although, this effect is
+    un-justified, as this much difference in the value can be really
+    surprising, there is a need to model other factors with random
+    effects, that we will see in coming answers)
+
+-   As seen from the coefficient of housing_median_age, the median value
+    of the house seems to go up 2.8% on the log scale, when moving ahead
+    from the average house age.
+
+-   Log_median_income seems to impact the median value of the house
+    positively and more in magnitude. It looks that it can influence
+    upto 32.2% for a unit-change in the log_median_income from the
+    average.
+
+-   Average bedrooms also are positively related with the median house
+    value on a log scale, where a change of 1 unit from the expected
+    average bedrooms the house value on log scale can increase by 3.2%.
+
+-   The location (longitudes and longitudes) seem to have a major
+    impact, but that can't be quantified directly as it won't make
+    sense. it will be better judged when we will be plotting the SPDE
+    effect in terms of location.
+
+**Compute the DIC, NLSCPO and WAIC scores.**
+
+**Check the sensitivity of your results to changing the priors.**
+
+```{r}
+cat("Marginal log-likelihood of model:",model1$mlik[1],"\n")
+cat("DIC of model:",model1$dic$dic,"\n")
+cat("WAIC of model:",model1$waic$waic,"\n")
+cat("NSLCPO of model:",-sum(log(model1$cpo$cpo)),"\n")
+```
+
+Checking the sensitivity of the results using various priors for the
+beta, and precision parameter
+
+```{r}
+# Let us change the priors and check for the sensitivty of the results
+b=5;
+alt_prec_prior <- list(prec=list(prior = sigma.unif.prior, initial = (-2*log(b)+1), fixed = FALSE))
+alt_prior_beta <- list(mean.intercept = 0, prec.intercept = 1e-5,
+                       mean = 0, prec = 1e-4)
+
+model_alt <- inla(formula1,family="gaussian",
+              data=housing.training, 
+              control.family=list(hyper=alt_prec_prior),
+              control.fixed=alt_prior_beta,
+              control.compute=list(cpo=T,dic=T,waic=T))
+
+cat("Marginal log-likelihood of model:",model_alt$mlik[1],"\n")
+cat("DIC of model:",model_alt$dic$dic,"\n")
+cat("WAIC of model:",model_alt$waic$waic,"\n")
+cat("NSLCPO of model:",-sum(log(model_alt$cpo$cpo)),"\n")
+```
+
+As we can see that by increasing the variance of the priors, the change
+in the marginal log-likelihood is noticed (It decreases with the
+decrease in he variance of the priors) but not much in the DIC, WAIC,
+NSLCPO scores. These scores remain almost same, as the priors are
+changed.
+
+**Q2)[10 marks]**
+
+**Update your model in Q1 to also include an rw1 random effect model for
+the housing_median_age, and an ar1 random effect model for
+log(median_income).**
+
+**Print out the model summary and interpret the posterior means of the
+regression coefficients.**
+
+```{r}
+# Define the model formula
+formula2 <- y ~ 1 + longitude + latitude + average_bed_rooms + as.factor(ocean_proximity) +f(housing_median_age,model="rw1")+f(log_median_income,model="ar1")
+
+# Fit the model using INLA
+sigma.unif.prior = "expression:
+  b = 5;
+  log_dens = (theta>=(-2*log(b)))*(-log(b)-theta/2-log(2)) + (theta<(-2*log(b)))*(-Inf);
+  return(log_dens); 
+"
+b2=10;
+prec.prior2 <- list(prec=list(prior = sigma.unif.prior,initial = (-2*log(b2)+1), fixed = FALSE))
+prior.beta2=list(mean.intercept = 0, prec.intercept = 0.1,
+                    mean = 0, prec = 1)
+model2 <- inla(formula2,family="gaussian",
+              data=housing.training, 
+              control.family=list(hyper=prec.prior2),
+              control.fixed=prior.beta2,
+              control.predictor = list(compute=TRUE),
+              control.compute=list(cpo=T,dic=T,waic=T, config=TRUE))
+
+# Print out the model summary
+summary(model2)
+```
+
+Interpretation of the posterior means of coefficients:
+
+This model is trained with bayesian linear regression and includes the
+Random Walk 1 model for housing_median_age, and Auto Regressive 1 model
+for log_median_income covariates. Let us try to interpret the posterior
+means of the regression coefficients.
+
+-   As we are able to observe that if the home is situated INLAND, it
+    can negatively impact the median house value, with probably a 31%
+    decline on the log scale. Also, a negligible negative effect (1.3%)
+    is observed for the houses near the ocean (Decreased from previous
+    model)
+
+-   As we see, compared to previous model, the negative impact magnitude
+    for NEAR THE BAY houses increases from 0.5% in first model to 3.9%
+    here. Also, the houses on ISLAND seems to have associated with more
+    house value on a log scale by 59.3% (As compared to the previous
+    model, with 70.6% change in log scale value of houses.
+
+-   Average bedrooms also are positively related with the median house
+    value on a log scale, where a change of 1 unit from the expected
+    average bedrooms the house value on log scale can increase by 2.9%.
+
+**Plot the posterior means of the random effects for housing_median_age
+and log(median_income). The** **x-axis should be the covariate value
+(such as housing_median_age), and the y-axis should be the posterior
+mean of the random effect.**
+
+```{r}
+plot(sort(unique(housing.training$housing_median_age)),model2$summary.random$housing_median_age$mean,type="l",xlab="Housing Median Age",ylab="Posterior mean of rw1 temporal random effect")
+
+plot(sort(unique(housing.training$log_median_income)),model2$summary.random$log_median_income$mean  , type="l",xlab="Log median Income",ylab="Posterior mean of ar1 random effect")
+```
+
+-   As we can notice here that till a specific level the housing median
+    age doesn't play a major role in decision making for the house
+    value, but after some time (More than average), the house value
+    tends to increase with the Median Housing Age.
+
+-   A strong increase in median house value is reflected by the graph as
+    the log median income increases. It is even noticed from the very
+    start, and increases with increasing median income.
+
+**Compute the DIC, NLSCPO and WAIC scores.**
+
+**Check the sensitivity of your results to changing the priors.**
+
+```{r}
+cat("Marginal log-likelihood of model:",model2$mlik[1],"\n")
+cat("DIC of model:",model2$dic$dic,"\n")
+cat("WAIC of model:",model2$waic$waic,"\n")
+cat("NSLCPO of model:",-sum(log(model2$cpo$cpo)),"\n")
+```
+
+Checking the sensitivity of the results using various priors for the
+beta, and precision parameter
+
+```{r}
+# Let us change the priors and check for the sensitivty of the results
+alt_beta_prior <- list(mean.intercept = 0, prec.intercept = 0.00001,
+                       mean = 0, prec = 0.001)
+
+model_alt <- inla(formula2,family="gaussian",
+              data=housing.training, 
+              control.family=list(hyper=prec.prior2),
+              control.fixed=alt_beta_prior,
+              control.compute=list(cpo=T,dic=T,waic=T))
+
+cat("Marginal log-likelihood of model:",model_alt$mlik[1],"\n")
+cat("DIC of model:",model_alt$dic$dic,"\n")
+cat("WAIC of model:",model_alt$waic$waic,"\n")
+cat("NSLCPO of model:",-sum(log(model_alt$cpo$cpo)),"\n")
+```
+
+As we can see that by increasing the variance of the intercept and beta
+parameter, the change in the marginal log-likelihood is noticed (It
+increases up to a level with the increase in the variance of the priors)
+but not much in the DIC, WAIC, NSLCPO scores. These scores remain almost
+same, as the priors are changed.
+
+**Q3)[10 marks]**
+
+**In this question, we will use a spatial random effects model for the
+location.**
+
+**Create a Bayesian regression model in INLA or inlabru with Gaussian
+likelihood using the housing.training dataset with
+log(median_house_value) as the response variable, and the fixed effects
+in the model are as follows:**
+
+**longitude, latitude,**
+
+**housing_median_age,**
+$(housing\_median\_age)^2$**,**$(housing\_median\_age)^3$,$(housing\_median\_age)^4$
+
+**log(median_income),** $(\log(median\_income))^2$**,**
+$(\log(median\_income))^3$, $(\log(median\_income))^4$ **,**
+
+**housing_median_age\*log(median_income),**
+
+**ocean_proximity, average_bed_rooms.**
+
+**Use scaled versions of the non-categorical covariates in your model.**
+
+**Include a spatial (spde2) random effect for the location (longitude,
+latitude), with Matern covariance. [Hint: You must create a mesh first;
+see the code for Lecture 7 and the solutions of Workshop 5.]**
+
+**Print out the model summary and interpret the posterior means of the
+regression coefficients.**
+
+Dear Instructor, here I am one-hot encoding the ocean_proximity because
+it gives me some errors while using INLA or INLABRU package. Also, I
+will put the interaction term in the dataset itself for ease in the
+formula. Also, for self-learning and validation I have used both the
+approaches that you have taught us, using the INLA and Inlabru.
+
+```{r}
+############################################
+########### Preparing the data  ############
+############################################
+ 
+
+# one hot encoding the ocean proximity in train and test sets
+onehot_ocean_proximity.training <- model.matrix(~0+housing.training$ocean_proximity)
+onehot_ocean_proximity.test <- model.matrix(~0+housing.test$ocean_proximity)
+
+onehot_housing.training <- cbind(housing.training,onehot_ocean_proximity.training)
+onehot_housing.test <- cbind(housing.test,onehot_ocean_proximity.test)
+colnames(onehot_housing.training)[which(names(onehot_housing.training) == "housing.training$ocean_proximity<1H OCEAN")] <- "Ocean_lt_1hour"
+colnames(onehot_housing.training)[which(names(onehot_housing.training) == "housing.training$ocean_proximityINLAND")] <- "Inland"
+colnames(onehot_housing.training)[which(names(onehot_housing.training) == "housing.training$ocean_proximityISLAND")] <- "Island"
+colnames(onehot_housing.training)[which(names(onehot_housing.training) == "housing.training$ocean_proximityNEAR BAY")] <- "Near_Bay"
+colnames(onehot_housing.training)[which(names(onehot_housing.training) == "housing.training$ocean_proximityNEAR OCEAN")] <- "Near_Ocean"
+colnames(onehot_housing.test)[which(names(onehot_housing.test) == "housing.test$ocean_proximity<1H OCEAN")] <- "Ocean_lt_1hour"
+colnames(onehot_housing.test)[which(names(onehot_housing.test) == "housing.test$ocean_proximityINLAND")] <- "Inland"
+colnames(onehot_housing.test)[which(names(onehot_housing.test) == "housing.test$ocean_proximityISLAND")] <- "Island"
+colnames(onehot_housing.test)[which(names(onehot_housing.test) == "housing.test$ocean_proximityNEAR BAY")] <- "Near_Bay"
+colnames(onehot_housing.test)[which(names(onehot_housing.test) == "housing.test$ocean_proximityNEAR OCEAN")] <- "Near_Ocean"
+
+# Introducing the interaction variable
+onehot_housing.training['housing_median_age*log_median_income'] = onehot_housing.training$housing_median_age*onehot_housing.training$log_median_income
+colnames(onehot_housing.training)[which(names(onehot_housing.training) == "housing_median_age*log_median_income")] <- "Interaction_term"
+onehot_housing.test['housing_median_age*log_median_income'] = onehot_housing.test$housing_median_age*onehot_housing.test$log_median_income
+colnames(onehot_housing.test)[which(names(onehot_housing.test) == "housing_median_age*log_median_income")] <- "Interaction_term"
+```
+
+Modelling using the INLA
+
+```{r}
+Locations = cbind(onehot_housing.training$longitude, onehot_housing.training$latitude)
+prdomain <- inla.nonconvex.hull(as.matrix(onehot_housing.training[, 1:2]),
+  convex = -0.03, concave = -0.05,
+  resolution = c(100, 100))
+
+prmesh <- inla.mesh.2d(boundary = prdomain, ## Creating the mesh
+  max.edge = c(0.5, 1), cutoff = 0.06)
+#plot(prmesh)
+
+loc.spde = inla.spde2.pcmatern(mesh = prmesh, ## SPDE
+           prior.range = c(1, 0.1), 
+           prior.sigma = c(10, 0.001))
+loc.A <- inla.spde.make.A(prmesh, loc = Locations) 
+loc.w <- inla.spde.make.index('w', n.spde = loc.spde$n.spde) 
+
+# Making the data 
+X0 <- model.matrix(as.formula(" ~ 0+ longitude + latitude + housing_median_age + housing_median_age2 + housing_median_age3 + housing_median_age4 + log_median_income + log_median_income2 + log_median_income3 + log_median_income4 + Interaction_term + Ocean_lt_1hour + Inland + Island + Near_Bay + Near_Ocean + average_bed_rooms"), data = onehot_housing.training) 
+
+X <- as.data.frame(X0) # convert to a data frame. 
+
+N <- nrow(onehot_housing.training) # Number of rows data
+
+
+# Making the stack
+StackPR<- inla.stack(
+  data = list(y = onehot_housing.training$y), # y is the response variable
+  
+  A = list(1, 1, loc.A), # Vector of Multiplication factors for  fixed effects              
+  
+  effects = list(
+    Intercept = rep(1, N), # Manual intercept
+    X = X, # attaching the model matrix
+    w = loc.w) ) # attaching the w 
+
+# Finally fitting the model
+model3 <- inla(y ~ 0 + Intercept + longitude + latitude + housing_median_age + housing_median_age2 + housing_median_age3 + housing_median_age4 + log_median_income + log_median_income2 + log_median_income3 + log_median_income4 + Interaction_term + Ocean_lt_1hour + Inland + Island + Near_Bay + Near_Ocean + average_bed_rooms +f(w, model = loc.spde),     
+            family = "Gaussian",
+            data = inla.stack.data(StackPR),
+            control.compute = list(cpo=T,dic = T, waic=T, config=TRUE),
+            control.predictor = list(A = inla.stack.A(StackPR), compute=TRUE))
+
+summary(model3)
+
+```
+
+Modelling with inlabru package (Gives same results)
+
+```{r}
+library(inlabru)
+
+# Initiating the mesh
+Locations = data.frame(easting=onehot_housing.training$longitude, northing=onehot_housing.training$latitude)
+loc.mesh <- inla.mesh.2d(Locations, max.edge = c(0.5, 1), cutoff = 0.06)
+loc.spde = inla.spde2.pcmatern(mesh = loc.mesh,
+           prior.range = c(1, 0.1),
+           prior.sigma = c(10, 0.001))
+
+# Transformed locations
+onehot_housing.training$sfLocations <- sf::st_as_sf(Locations,coords = c("easting", "northing"))$geometry
+
+# Formula
+cmp <- y ~ floc(sfLocations, model = loc.spde) + longitude + latitude + housing_median_age + housing_median_age2 + housing_median_age3 + housing_median_age4 + log_median_income + log_median_income2 + log_median_income3 + log_median_income4 + Interaction_term + Ocean_lt_1hour + Inland + Island + Near_Bay + Near_Ocean + average_bed_rooms + Intercept(1)
+
+# Modelling
+model3_bru <- bru(cmp, onehot_housing.training,
+             family = "gaussian",
+             samplers = prdomain,
+             domain = list(coordinates = prmesh),
+             options=list(control.compute=list(cpo=T,dic=T,waic=T),
+                          control.inla=list(tolerance=1e-10)))
+
+summary(model3_bru)
+```
+
+Interpretation of the posterior means of coefficients:
+
+This model includes the spde random effect on the locations. Let us
+analyse the coefficients
+
+-   Unlike other two models, when the location spde random effect is
+    taken into consideration, the ocean proximity becomes less relevant
+    to be watched upon, instead the spde posterior means are more
+    valuable here to look for. Also, this can be seen by the relevancy
+    of the longitude and latitude, and irrelevancy of the Ocean
+    proximity.
+
+-   There is negligible interaction between the housing_median_age and
+    log_median_income.
+
+-   Log of the median income is still a major decision maker in
+    determining the value of the house. This is observed to be
+    positively correlated, while its higher orders not being so
+    significant.
+
+-   Here, housing median age is seen to be negatively impacting the
+    value of the house. It can be seen that a -3.1% change is seen on
+    the log scale of the house value, when 1-unit median age is
+    increased.
+
+**Plot the posterior mean of the spatial random effect in terms of the
+location.**
+
+```{r}
+library(devtools)
+if(!require(ggregplot)){
+    devtools::install_github("gfalbery/ggregplot")
+    library(ggregplot)
+}
+library(ggplot2) 
+library(tidyverse)
+library(RColorBrewer)
+
+ggField(model3, prmesh, Groups = 1,Res=600) + scale_fill_brewer(palette = "RdYlBu")
+```
+
+As visible from the figure above, there are certain areas where the
+value of the houses tend to be more as compared to the other areas.
+
+**Compute the DIC, NLSCPO and WAIC scores.**
+
+**Compare the models in Q1) - Q3) in terms of DIC, NLSCPO and WAIC
+scores.**
+
+```{r}
+cat("Marginal log-likelihood of model:",model1$mlik[1],"\n")
+cat("DIC of model:",model1$dic$dic,"\n")
+cat("WAIC of model:",model1$waic$waic,"\n")
+cat("NSLCPO of model:",-sum(log(model1$cpo$cpo)),"\n")
+cat("\n","\n")
+
+cat("Marginal log-likelihood of model:",model2$mlik[1],"\n")
+cat("DIC of model:",model2$dic$dic,"\n")
+cat("WAIC of model:",model2$waic$waic,"\n")
+cat("NSLCPO of model:",-sum(log(model2$cpo$cpo)),"\n")
+cat("\n","\n")
+
+cat("Marginal log-likelihood of model:",model3$mlik[1],"\n")
+cat("DIC of model:",model3$dic$dic,"\n")
+cat("WAIC of model:",model3$waic$waic,"\n")
+cat("NSLCPO of model:",-sum(log(model3$cpo$cpo)),"\n")
+```
+
+Clearly, Model 3 is the best model, as it is having the maximum marginal
+log-likelihood, with minimum DIC, WAIC, and NSLCPO in all the three
+models. Model 3 performs far better on all the three criteria, hence
+that is the best model
+
+**Check the sensitivity of your results to changing the priors and using
+a finer mesh.**
+
+Let us change the priors of the spde, and also use the finer mesh.
+
+-   We will increase the variance of the SPDE priors, and intialise them
+    with a greater value
+
+-   Also, we will reduce the cutt-off for the mesh, with small decrease
+    in the max.edge, making the mesh more finer.
+
+```{r}
+# Initiating the mesh
+loc.mesh <- inla.mesh.2d(Locations, max.edge = c(0.4, 0.8), cutoff = 0.03)
+loc.spde = inla.spde2.pcmatern(mesh = loc.mesh,
+           prior.range = c(1, 0.001),
+           prior.sigma = c(100, 0.0001))
+
+# Formula
+cmp <- y ~ floc(sfLocations, model = loc.spde) + longitude + latitude + housing_median_age + housing_median_age2 + housing_median_age3 + housing_median_age4 + log_median_income + log_median_income2 + log_median_income3 + log_median_income4 + Interaction_term + Ocean_lt_1hour + Inland + Island + Near_Bay + Near_Ocean + average_bed_rooms + Intercept(1)
+
+# Modelling
+model3_bru <- bru(cmp, onehot_housing.training,
+             family = "gaussian",
+             samplers = prdomain,
+             domain = list(coordinates = prmesh),
+             options=list(control.compute=list(cpo=T,dic=T,waic=T),
+                          control.inla=list(tolerance=1e-10)))
+
+cat("Marginal log-likelihood of model:",model3_bru$mlik[1],"\n")
+cat("DIC of model:",model3_bru$dic$dic,"\n")
+cat("WAIC of model:",model3_bru$waic$waic,"\n")
+cat("NSLCPO of model:",-sum(log(model3_bru$cpo$cpo)),"\n")
+```
+
+As we see here that using a finer mesh, and giving the parameters of the
+spde more variance helps us to model the complexities in the locations
+using the random effects. Now, this has to be controlled using various
+predictive checks on the test dats also. As, there has to be a trade-off
+between the training accuracy and testing accuracy of the model.
+
+Hence, for these performance increment, th performance of the test set
+should also be continuously checked for .
+
+**Q4)[10 marks]**
+
+**In this question, we will evaluate the predictive performance of these
+models.**
+
+**Do the following two tests for all 3 models.**
+
+**First, compute the posterior mean of the log(median_house_value) for
+the districts in the training dataset housing.training. Compute the
+median absolute difference between the posterior means of the
+log(median_house_value) and its true values on the training dataset.
+This can be done by including the posterior means in an array** $v$ **,
+the true values in an array** $t$**, and computing**
+$\text{median}(|v-t|)$.
+
+**Second, evaluate the log(median_house_value) 's posterior predictive
+means on the test dataset housing.test. Compute the median absolute
+difference between the log(median_house_value) 's posterior predictive
+mean and its true value on the test dataset.**
+
+**Discuss the results.**
+
+```{r}
+## Now for evaluating the posterior means of log(median_house_value) on test data, we will bind the dataset with test data and NA as response values, and then one by one train the models again
+
+# Evaluate the posterior predictive means of log(median_house_value) on the test dataset
+y_test <- housing.test$y # Note th response variable separately
+housing.test$y <- NA # set NA as response in data
+
+data_binded <- rbind(housing.training, housing.test) # merge train and test (with NA)
+
+# Model 1
+model1_test <- inla(formula1,family="gaussian",
+              data=data_binded, 
+              control.family=list(hyper=prec.prior1),
+              control.fixed=prior.beta1,
+              control.compute=list(cpo=T,dic=T,waic=T),
+              control.predictor = list(compute=TRUE))
+# Model 2
+model2_test <- inla(formula2,family="gaussian",  
+              data=data_binded, 
+              control.family=list(hyper=prec.prior2),
+              control.fixed=prior.beta2,
+              control.predictor = list(compute=TRUE),
+              control.compute=list(cpo=T,dic=T,waic=T))
+
+# Model 3
+onehot_housing.test$y <- NA # Using the one-hot encoded data with NA response
+onehot_housing.training <- subset(onehot_housing.training, select = -c(sfLocations)) # Removing due to mismatch
+data_binded <- rbind(onehot_housing.training, onehot_housing.test) # Merging train and test 
+Locations = cbind(data_binded$longitude, data_binded$latitude)
+prdomain <- inla.nonconvex.hull(as.matrix(data_binded[, 1:2]),
+  convex = -0.03, concave = -0.05,
+  resolution = c(100, 100))
+prmesh <- inla.mesh.2d(boundary = prdomain,
+  max.edge = c(0.45, 1), cutoff = 0.1)
+loc.spde = inla.spde2.pcmatern(mesh = prmesh, 
+           prior.range = c(1, 0.1), 
+           prior.sigma = c(100, 0.1))
+loc.A <- inla.spde.make.A(prmesh, loc = Locations) 
+loc.w <- inla.spde.make.index('w', n.spde = loc.spde$n.spde) 
+X0 <- model.matrix(as.formula(" ~ 0+ longitude + latitude + housing_median_age + housing_median_age2 + housing_median_age3 + housing_median_age4 + log_median_income + log_median_income2 + log_median_income3 + log_median_income4 + Interaction_term + Ocean_lt_1hour + Inland + Island + Near_Bay + Near_Ocean + average_bed_rooms"), data = data_binded) 
+
+X <- as.data.frame(X0) # convert to a data frame. 
+N <- nrow(data_binded)
+
+StackPR<- inla.stack(
+  data = list(y = data_binded$y), # specify the response variable
+  A = list(1, 1, loc.A), # Vector of Multiplication factors for  fixed effects              
+  effects = list(
+    Intercept = rep(1, N), # specify the manual intercept!
+    X = X, # attach the model matrix
+   # insert vectors of any random effects
+    w = loc.w) ) # attach the w 
+
+model3_test <- inla(y ~ 0 + Intercept + longitude + latitude + housing_median_age + housing_median_age2 + housing_median_age3 + housing_median_age4 + log_median_income + log_median_income2 + log_median_income3 + log_median_income4 + Interaction_term + Ocean_lt_1hour + Inland + Island + Near_Bay + Near_Ocean + average_bed_rooms +f(w, model = loc.spde),     
+            family = "Gaussian",
+            data = inla.stack.data(StackPR),
+            control.compute = list(cpo=T,dic = T, waic=T),
+            control.predictor = list(A = inla.stack.A(StackPR), compute=TRUE))
+
+
+# Compute the posterior mean of log(median_house_value) for the districts in the training dataset
+posterior_means_model1 <- model1$summary.fitted.values$mean
+posterior_means_model2 <- model2$summary.fitted.values$mean
+posterior_means_model3 <- model3$summary.fitted.values$mean
+
+# Compute the posterior mean of log(median_house_value) for the districts in the test dataset
+posterior_means_model1_test <- model1_test$summary.fitted.values$mean
+posterior_means_model2_test <- model2_test$summary.fitted.values$mean
+posterior_means_model3_test <- model3_test$summary.fitted.values$mean
+
+# Compute the median absolute difference between the posterior means and the true values on the training dataset
+median_absolute_diff_model1 <- median(abs(posterior_means_model1[1:10217] - onehot_housing.training$y))
+median_absolute_diff_model2 <- median(abs(posterior_means_model2[1:10217] - onehot_housing.training$y))
+median_absolute_diff_model3 <- median(abs(posterior_means_model3[1:10217] - onehot_housing.training$y))
+
+# Compute the median absolute difference between the posterior means and the true values on the test dataset
+median_absolute_diff_model1_test <- median(abs(posterior_means_model1_test[10218:20433] - y_test))
+median_absolute_diff_model2_test <- median(abs(posterior_means_model2_test[10218:20433] - y_test))
+median_absolute_diff_model3_test <- median(abs(posterior_means_model3_test[10218:20433] - y_test))
+
+
+# Print the results
+cat("Median Absolute Difference (Training Dataset) - Model 1:", median_absolute_diff_model1, "\n")
+cat("Median Absolute Difference (Training Dataset) - Model 2:", median_absolute_diff_model2, "\n")
+cat("Median Absolute Difference (Training Dataset) - Model 3:", median_absolute_diff_model3, "\n")
+cat("Median Absolute Difference (Test Dataset) - Model 1:", median_absolute_diff_model1_test, "\n")
+cat("Median Absolute Difference (Test Dataset) - Model 2:", median_absolute_diff_model2_test, "\n")
+cat("Median Absolute Difference (Test Dataset) - Model 3:", median_absolute_diff_model3_test, "\n")
+
+```
+
+Le us discuss the predictive performance of the models trained here:
+
+-   Model 1: This model performs the worst out of all three models. As
+    can be seen the median absolute error is highest on both training
+    and testing data.
+
+-   Model 2: This model performs better than Model 1 on training data,
+    but is again unable to capture the nature of the data, as can be
+    seen from almost similar performance to model 1 on test data. Hence,
+    this is some what better that model 1, but not more than model 3.
+
+-   Model 3: This model is able to capture the complexities of the data
+    through the SPDE modelling for location. This performs equally well
+    on the train and test sets, hence, is a very good model for this
+    data. There is no evidence of overfiting as the performance is
+    really well on both the sets of data.
+
+**Q5)[10 marks] Perform posterior predictive checks (using replicates)
+on all 3 models Q1-Q3 fitted on the housing.training dataset. Choose
+your test functions to provide insight into the model. Discuss the
+results.**
+
+Dear Instructor, I first used the mean and standard deviation as test
+functions, but soon came across various skewed distributions, hence,
+resorted to be choosing Min, Max, Median, Skewness, and Kurtosis
+functions. Now, let us evaluate these functions for all the three models
+on the replicated data.
+
+```{r}
+require(fBasics)
+
+# Function to perform posterior predictive checks on every model
+posterior_predictive_checks <- function(model, model_name ,num_replicates = 1000) {
+    # Generate replicated datasets
+    replicated_datasets <- inla.posterior.sample(model, n = num_replicates)
+    
+    # Compute test functions
+    min_list <- numeric(num_replicates)
+    max_list <- numeric(num_replicates)
+    median_list <- numeric(num_replicates)
+    skewness_list <- numeric(num_replicates)
+    kurtosis_list <- numeric(num_replicates)
+    for (i in 1:num_replicates) {
+        replicated_data <- replicated_datasets[[i]]$latent
+        min_list[i] <- min(replicated_data)
+        max_list[i] <- max(replicated_data)
+        median_list[i] <- median(replicated_data)
+        skewness_list[i] <- skewness(replicated_data)
+        kurtosis_list[i] <- kurtosis(replicated_data)
+    }
+    
+    
+    # Plot the distributions of test functions
+    hist(min_list, main = paste("Log(median_house_value) Replicates ", model_name), xlab = "Minimum")
+    abline(v=min(housing.training$y),col="red",lwd=5)
+    
+    hist(max_list, main = paste("Log (median_house_value) Replicates", model_name), xlab = "Maximum")
+    abline(v=max(housing.training$y),col="red",lwd=5)
+    
+    # Plot the distributions of test functions
+    hist(median_list, main = paste("Log (median_house_value) Replicates", model_name), xlab = "Median")
+    abline(v=median(housing.training$y),col="red",lwd=5)
+    
+    hist(skewness_list, main = paste("Log (median_house_value) Replicates", model_name), xlab = "Skewness")
+    abline(v=skewness(housing.training$y),col="red",lwd=5)
+    
+    # Plot the distributions of test functions
+    hist(kurtosis_list, main = paste("Log (median_house_value) Replicates", model_name), xlab = "Kurtosis")
+    abline(v=kurtosis(housing.training$y),col="red",lwd=5)
+  }
+
+
+posterior_predictive_checks(model1, "Model 1",1000) # Model 1 Checks
+posterior_predictive_checks(model2, "Model 2 (rw1 random effects)", 1000) #Model 2 
+posterior_predictive_checks(model3, "Model 3 (ar1 random effects)", 1000) # Model 3
+
+```
+
+Analysing the histograms, it is quite clear that the model 3 is able to
+capture the complexities better than that of the model 1 and model 2.
+The test functions show that the model 3 is somehow close to the real
+value of the test, when visualised from the histograms. Also, the model
+3 is not able to capture the Minimum, which is evident from the test
+function. this may be due to presence of some outliers in the dataset.
+
+Hence, from the analysis of all the three models 1,2,3, it is clear that
+the model 3 with SPDE random effects over location, are best capturing
+the intrecacies of the data and modelling it with good performance. This
+can be made finer by tuning and adjusting the parameters more, or
+performing grid search over various priors and meshes.
